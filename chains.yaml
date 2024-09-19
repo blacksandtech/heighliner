@@ -957,10 +957,15 @@
   github-repo: osmosis
   dockerfile: cosmos
   build-target: make build
+  pre-build: |
+    wget https://github.com/CosmWasm/wasmvm/releases/download/v2.1.2/libwasmvm_muslc.x86_64.a -O /lib/libwasmvm_muslc.x86_64.a
+    mv /lib/libwasmvm_muslc.x86_64.a /usr/lib
   binaries:
     - build/osmosisd
   build-env:
     - BUILD_TAGS=muslc
+  libraries:
+    - /usr/lib/libwasmvm_muslc.x86_64.a
 
 # panacea
 - name: panacea
