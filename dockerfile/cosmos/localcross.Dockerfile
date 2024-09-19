@@ -15,7 +15,7 @@ RUN if [ "${TARGETARCH}" = "arm64" ] && [ "${BUILDARCH}" != "arm64" ]; then\
 ARG GITHUB_ORGANIZATION
 ARG REPO_HOST
 
-WORKDIR /go/src/${REPO_HOST}/${GITHUB_ORGANIZATION}
+WORKDIR /go/src/${REPO_HOST}/${GITHUB_ORGANIZATION}/${GITHUB_REPO}
 
 ARG GITHUB_REPO
 ARG VERSION
@@ -23,14 +23,23 @@ ARG BUILD_TIMESTAMP
 
 ADD . .
 
-WORKDIR /go/src/${REPO_HOST}/${GITHUB_ORGANIZATION}/${GITHUB_REPO}
-
 ARG BUILD_TARGET
 ARG BUILD_ENV
 ARG BUILD_TAGS
 ARG PRE_BUILD
 ARG BUILD_DIR
 ARG WASMVM_VERSION
+
+ARG CLONE_KEY
+
+RUN if [ ! -z "${CLONE_KEY}" ]; then\
+  mkdir -p ~/.ssh;\
+  echo "${CLONE_KEY}" | base64 -d > ~/.ssh/id_ed25519;\
+  chmod 600 ~/.ssh/id_ed25519;\
+  apk add openssh;\
+  git config --global --add url."ssh://git@github.com/".insteadOf "https://github.com/";\
+  ssh-keyscan github.com >> ~/.ssh/known_hosts;\
+  fi
 
 RUN set -eux;\
     LIBDIR=/lib;\
@@ -112,6 +121,9 @@ RUN addgroup --gid 1025 -S heighliner && adduser --uid 1025 -S heighliner -G hei
 # Use ln and rm from full featured busybox for assembling final image
 FROM busybox:1.34.1-musl AS busybox-full
 
+# Use alpine to source the latest CA certificates
+FROM alpine:3 as alpine-3
+
 # Build final image from scratch
 FROM scratch
 
@@ -166,7 +178,7 @@ COPY --from=build-env /root/bin /bin
 COPY --from=build-env /root/lib /lib
 
 # Install trusted CA certificates
-COPY --from=infra-toolkit /etc/ssl/cert.pem /etc/ssl/cert.pem
+COPY --from=alpine-3 /etc/ssl/cert.pem /etc/ssl/cert.pem
 
 # Install heighliner user
 COPY --from=infra-toolkit /etc/passwd /etc/passwd
