@@ -19,6 +19,7 @@ RUN set -eux; \
       WASMVM_REPO=$(echo $WASMVM_VERSION | awk '{print $1}');\
       WASMVM_VERS=$(echo $WASMVM_VERSION | awk '{print $2}');\
       wget -O /lib/libwasmvm_muslc.a https://${WASMVM_REPO}/releases/download/${WASMVM_VERS}/libwasmvm_muslc.$(uname -m).a;\
+      ln /lib/libwasmvm_muslc.a /lib/libwasmvm_muslc.$(uname -m).a;\
     fi;
 
 ARG BUILD_DIR
@@ -36,11 +37,15 @@ RUN if [ ! -z "${CLONE_KEY}" ]; then\
   ssh-keyscan github.com >> ~/.ssh/known_hosts;\
   fi
 
-# Download go mod dependencies, if there is no custom build directory
+
+ARG VENDOR
+
+# Download go mod dependencies, if there is no custom build directory.
+# Skips if a go related "vendor" folder is detected.
 # Note: a custom build dir indicates a monorepo with potential dependencies we can't anticipate atm
 RUN set -eux; \
-    if [[ "${BUILD_DIR}" == "." ]]; then \
-      go mod download; \
+    if [[ "${BUILD_DIR}" == "." && "${VENDOR}}" == "false" ]]; then\
+        go mod download;\
     fi;
 
 # Use minimal busybox from infra-toolkit image for final scratch image
@@ -52,61 +57,6 @@ FROM busybox:1.34.1-musl AS busybox-full
 
 # Use alpine to source the latest CA certificates
 FROM alpine:3 as alpine-3
-
-# Build part 1 of the final image
-FROM scratch AS final-part1
-
-LABEL org.opencontainers.image.source="https://github.com/strangelove-ventures/heighliner"
-
-WORKDIR /bin
-
-# Install ln (for making hard links) and rm (for cleanup) from full busybox image (will be deleted, only needed for image assembly)
-COPY --from=busybox-full /bin/ln /bin/rm ./
-
-# Install minimal busybox image as shell binary (will create hardlinks for the rest of the binaries to this data)
-COPY --from=infra-toolkit /busybox/busybox /bin/sh
-
-# Install jq
-COPY --from=infra-toolkit /usr/local/bin/jq /bin/
-
-# Add hard links for read-only utils
-# Will then only have one copy of the busybox minimal binary file with all utils pointing to the same underlying inode
-RUN for b in \
-  cat \
-  date \
-  df \
-  du \
-  env \
-  grep \
-  head \
-  less \
-  ls \
-  md5sum \
-  pwd \
-  sha1sum \
-  sha256sum \
-  sha3sum \
-  sha512sum \
-  sleep \
-  stty \
-  tail \
-  tar \
-  tee \
-  tr \
-  watch \
-  which \
-  ; do ln sh $b; done
-
-# Remove write utils
-RUN rm ln rm
-
-# Install trusted CA certificates
-COPY --from=alpine-3 /etc/ssl/cert.pem /etc/ssl/cert.pem
-
-# Install heighliner user
-COPY --from=infra-toolkit /etc/passwd /etc/passwd
-COPY --from=infra-toolkit --chown=1025:1025 /home/heighliner /home/heighliner
-COPY --from=infra-toolkit --chown=1025:1025 /tmp /tmp
 
 # Install chain binary
 FROM init-env AS build-env
@@ -171,9 +121,86 @@ ENV LIBRARIES_ENV ${LIBRARIES}
 RUN bash -c 'set -eux;\
   LIBRARIES_ARR=($LIBRARIES_ENV); for LIBRARY in "${LIBRARIES_ARR[@]}"; do cp $LIBRARY /root/lib/; done'
 
-# Move final binary to the final image
-FROM final-part1 as final
+# Copy over directories
+RUN mkdir -p /root/dir_abs && touch /root/dir_abs.list
+ARG DIRECTORIES
+ENV DIRECTORIES_ENV ${DIRECTORIES}
+RUN bash -c 'set -eux;\
+  DIRECTORIES_ARR=($DIRECTORIES_ENV);\
+  i=0;\
+  for DIRECTORY in "${DIRECTORIES_ARR[@]}"; do \
+    cp -R $DIRECTORY /root/dir_abs/$i;\
+    echo $DIRECTORY >> /root/dir_abs.list;\
+    ((i = i + 1));\
+  done'
+
+# Build final image
+FROM scratch
+
+LABEL org.opencontainers.image.source="https://github.com/strangelove-ventures/heighliner"
+
 WORKDIR /bin
+
+# Install ln (for making hard links) and rm (for cleanup) from full busybox image (will be deleted, only needed for image assembly)
+COPY --from=busybox-full /bin/ln /bin/mv /bin/rm /bin/mkdir /bin/dirname ./
+
+# Install minimal busybox image as shell binary (will create hardlinks for the rest of the binaries to this data)
+COPY --from=infra-toolkit /busybox/busybox /bin/sh
+
+# Install jq
+COPY --from=infra-toolkit /usr/local/bin/jq /bin/
+
+# Add hard links for read-only utils
+# Will then only have one copy of the busybox minimal binary file with all utils pointing to the same underlying inode
+RUN for b in \
+  cat \
+  date \
+  df \
+  du \
+  env \
+  grep \
+  head \
+  less \
+  ls \
+  md5sum \
+  pwd \
+  sha1sum \
+  sha256sum \
+  sha3sum \
+  sha512sum \
+  sleep \
+  stty \
+  tail \
+  tar \
+  tee \
+  tr \
+  watch \
+  which \
+  ; do ln sh $b; done
+
+# Copy over absolute path directories
+COPY --from=build-env /root/dir_abs /root/dir_abs
+COPY --from=build-env /root/dir_abs.list /root/dir_abs.list
+
+# Move absolute path directories to their absolute locations.
+RUN sh -c 'i=0; while read DIR; do\
+      echo "$i: $DIR";\
+      PLACEDIR="$(dirname "$DIR")";\
+      mkdir -p "$PLACEDIR";\
+      mv /root/dir_abs/$i $DIR;\
+      i=$((i+1));\
+    done < /root/dir_abs.list'
+
+# Remove write utils
+RUN rm ln rm mv mkdir dirname
+
+# Install trusted CA certificates
+COPY --from=alpine-3 /etc/ssl/cert.pem /etc/ssl/cert.pem
+
+# Install heighliner user
+COPY --from=infra-toolkit /etc/passwd /etc/passwd
+COPY --from=infra-toolkit --chown=1025:1025 /home/heighliner /home/heighliner
+COPY --from=infra-toolkit --chown=1025:1025 /tmp /tmp
 
 # Install chain binaries
 COPY --from=build-env /root/bin /bin

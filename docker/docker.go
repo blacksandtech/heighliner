@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/archive"
 )
@@ -71,7 +72,7 @@ func BuildDockerImage(ctx context.Context, dockerfile string, tags []string, pus
 			return err
 		}
 		if dockerLogLine.Stream != "" {
-			fmt.Printf(dockerLogLine.Stream)
+			fmt.Printf("%s", dockerLogLine.Stream)
 		}
 		if dockerLogLine.Aux != nil {
 			fmt.Printf("Image ID: %s\n", dockerLogLine.Aux.ID)
@@ -92,7 +93,7 @@ func BuildDockerImage(ctx context.Context, dockerfile string, tags []string, pus
 
 	// push all image tags to container registry using provided auth
 	for _, imageTag := range tags {
-		rd, err := dockerClient.ImagePush(ctx, imageTag, types.ImagePushOptions{
+		rd, err := dockerClient.ImagePush(ctx, imageTag, image.PushOptions{
 			All: true,
 		})
 		if err != nil {

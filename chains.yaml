@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Acrechain
 - name: acrechain
   github-organization: ArableProtocol
@@ -1353,3 +1354,6 @@
     - /go/bin/xplad
   build-env:
     - BUILD_TAGS=muslc
+=======
+# This is a stub file. Please add new chains to the chains/ directory
+>>>>>>> upstream/main
