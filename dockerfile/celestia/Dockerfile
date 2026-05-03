@@ -1,5 +1,4 @@
-ARG BASE_VERSION=24.04
-FROM --platform=$BUILDPLATFORM ubuntu:${BASE_VERSION} AS build-env
+FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS build-env
 
 RUN apt-get update && apt-get install -y curl tar ca-certificates && rm -rf /var/lib/apt/lists/*
 
@@ -64,91 +63,42 @@ RUN bash -c 'set -eux; \
         ((i = i + 1)); \
     done'
 
-# Use minimal busybox from infra-toolkit image for final scratch image
-FROM ghcr.io/strangelove-ventures/infra-toolkit:v0.1.12 AS infra-toolkit
-RUN addgroup --gid 1025 -S heighliner && adduser --uid 1025 -S heighliner -G heighliner
-
-# Use alpine to source the latest CA certificates
-FROM alpine:20250108 as alpine-3
-
-# Build final image from scratch
-FROM scratch
+# Build final image from Ubuntu (required for glibc)
+FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.source="https://github.com/strangelove-ventures/heighliner"
 
-WORKDIR /bin
+# Install minimal required packages
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install minimal busybox as `sh` and `ln` binaries
-# sh allows using `RUN` commands
-COPY --from=infra-toolkit /busybox/busybox /bin/sh
-# ln creates hardlinks for exposed binaries from infra-toolkit min config
-COPY --from=infra-toolkit /busybox/busybox /bin/ln
-
-# Install jq
-COPY --from=infra-toolkit /usr/local/bin/jq /bin/
-
-# Add hard links for utils
-# Will then only have one copy of the busybox minimal binary file with all utils pointing to the same underlying inode
-RUN for b in \
-  cat \
-  date \
-  df \
-  dirname \
-  du \
-  env \
-  grep \
-  head \
-  less \
-  ls \
-  md5sum \
-  mkdir \
-  mv \
-  pwd \
-  rm \
-  sed \
-  sha1sum \
-  sha256sum \
-  sha3sum \
-  sha512sum \
-  sleep \
-  stty \
-  tail \
-  tar \
-  tee \
-  tr \
-  vi \
-  watch \
-  which \
-  ; do ln ln $b; done; \
-  rm -rf sh; \
-  ln ln sh;
+# Create heighliner user
+RUN groupadd --gid 1025 heighliner && \
+    useradd --uid 1025 --gid heighliner --shell /bin/bash --create-home heighliner
 
 # Copy over absolute path directories
 COPY --from=build-env /root/dir_abs /root/dir_abs
 COPY --from=build-env /root/dir_abs.list /root/dir_abs.list
 
-# Move absolute path directories to their absolute locations.
-RUN sh -c 'i=0; while read DIR; do\
-      echo "$i: $DIR";\
-      PLACEDIR="$(dirname "$DIR")";\
-      mkdir -p "$PLACEDIR";\
-      mv /root/dir_abs/$i $DIR;\
-      i=$((i+1));\
-    done < /root/dir_abs.list'
+# Move absolute path directories to their absolute locations
+RUN if [ -s /root/dir_abs.list ]; then \
+      i=0; \
+      while read DIR; do \
+        echo "$i: $DIR"; \
+        PLACEDIR="$(dirname "$DIR")"; \
+        mkdir -p "$PLACEDIR"; \
+        mv /root/dir_abs/$i $DIR; \
+        i=$((i+1)); \
+      done < /root/dir_abs.list; \
+    fi
 
 # Install chain binaries
-COPY --from=build-env /root/bin /bin
+COPY --from=build-env /root/bin/* /usr/local/bin/
 
-# Install libraries
-COPY --from=build-env /root/lib /lib
-
-# Install trusted CA certificates
-COPY --from=alpine-3 /etc/ssl/cert.pem /etc/ssl/cert.pem
-
-# Install heighliner user
-COPY --from=infra-toolkit /etc/passwd /etc/passwd
-COPY --from=infra-toolkit --chown=1025:1025 /home/heighliner /home/heighliner
-COPY --from=infra-toolkit --chown=1025:1025 /tmp /tmp
+# Install libraries if any
+RUN mkdir -p /usr/local/lib
+COPY --from=build-env /root/lib/* /usr/local/lib/ || true
 
 WORKDIR /home/heighliner
 USER heighliner
