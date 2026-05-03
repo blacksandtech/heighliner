@@ -4,6 +4,7 @@ type DockerfileType string
 
 const (
 	DockerfileTypeCosmos    DockerfileType = "cosmos"
+	DockerfileTypeCelestia  DockerfileType = "celestia"
 	DockerfileTypeAvalanche DockerfileType = "avalanche"
 	DockerfileTypeCargo     DockerfileType = "cargo"
 	DockerfileTypeImported  DockerfileType = "imported"
